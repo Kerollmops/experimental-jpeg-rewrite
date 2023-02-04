@@ -4,6 +4,7 @@ use std::{fs, thread};
 use clap::Parser;
 use crossbeam_channel::Receiver;
 use image::io::Reader as ImageReader;
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use walkdir::{DirEntry, WalkDir};
 
@@ -16,8 +17,12 @@ struct Opt {
 fn main() -> anyhow::Result<()> {
     let Opt { source, destination } = Opt::parse();
 
+    let total_count = WalkDir::new(&source).follow_links(true).into_iter().count() as u64;
+    let style = ProgressStyle::with_template("{wide_bar} {human_pos}/{human_len} {eta}").unwrap();
+    let bar = ProgressBar::new(total_count).with_style(style);
+
     let (sender, receiver) = crossbeam_channel::bounded(100);
-    let _handle = thread::spawn(move || parallel_process(receiver));
+    let _handle = thread::spawn(move || parallel_process(bar, receiver));
 
     for result in WalkDir::new(&source).follow_links(true) {
         match result {
@@ -38,17 +43,13 @@ struct Task {
     destination: PathBuf,
 }
 
-fn parallel_process(receiver: Receiver<Task>) {
-    receiver.into_iter().par_bridge().for_each(|Task { entry, destination }| {
+fn parallel_process(bar: ProgressBar, receiver: Receiver<Task>) {
+    receiver.into_iter().par_bridge().progress_with(bar).for_each(|Task { entry, destination }| {
         let ftype = entry.file_type();
         if ftype.is_file() {
             match ImageReader::open(entry.path()) {
                 Ok(reader) => match reader.decode() {
-                    Ok(image) => {
-                        println!("processing {:?}...", entry.path().display());
-                        image.save(&destination).unwrap();
-                        println!("processed {}.", destination.display());
-                    }
+                    Ok(image) => image.save(&destination).unwrap(),
                     Err(_) => fs::copy(entry.path(), destination).map(drop).unwrap(),
                 },
                 Err(e) => eprintln!("{e}"),
