@@ -1,0 +1,6 @@
+# Rust
+/target
+
+# Working Directories
+/data-dest
+/data-source
