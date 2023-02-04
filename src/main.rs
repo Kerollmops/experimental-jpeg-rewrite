@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "keep-file-times", feature(file_set_times))]
+
 use std::path::PathBuf;
 use std::{fs, thread};
 
@@ -53,18 +55,31 @@ fn parallel_process(bar: ProgressBar, receiver: Receiver<Task>) -> anyhow::Resul
             let ftype = entry.file_type();
             if ftype.is_file() {
                 match ImageReader::open(entry.path()) {
-                    Ok(reader) => match reader.decode() {
-                        Ok(image) => image.save(&destination)?,
-                        Err(_) => {
-                            fs::copy(entry.path(), &destination).map(drop).with_context(|| {
-                                format!(
-                                    "Copying {} into {}",
-                                    entry.path().display(),
-                                    destination.display()
-                                )
-                            })?
+                    Ok(reader) => {
+                        match reader.decode() {
+                            Ok(image) => image.save(&destination)?,
+                            Err(_) => fs::copy(entry.path(), &destination).map(drop).with_context(
+                                || {
+                                    format!(
+                                        "Copying {} into {}",
+                                        entry.path().display(),
+                                        destination.display()
+                                    )
+                                },
+                            )?,
                         }
-                    },
+
+                        // We keep the accessed and modified times
+                        if cfg!(feature = "keep-file-times") {
+                            use std::fs::{File, FileTimes};
+                            let src = File::open(&entry.path())?;
+                            let times = FileTimes::new()
+                                .set_accessed(src.metadata()?.accessed()?)
+                                .set_modified(src.metadata()?.modified()?);
+                            let dest = File::options().write(true).open(&destination)?;
+                            dest.set_times(times)?;
+                        }
+                    }
                     Err(e) => eprintln!("{e}"),
                 }
             } else if ftype.is_dir() || ftype.is_symlink() {

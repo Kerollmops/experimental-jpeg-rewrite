@@ -11,3 +11,7 @@ image = { version = "0.24.5", default-features = false, features = ["jpeg_rayon"
 indicatif = { version = "0.17.3", features = ["rayon"] }
 rayon = "1.6.1"
 walkdir = "2.3.2"
+
+[features]
+default = ["keep-file-times"]
+keep-file-times = []
