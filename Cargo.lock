@@ -163,7 +163,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "crossbeam-channel",
  "image",
+ "rayon",
  "walkdir",
 ]
 
