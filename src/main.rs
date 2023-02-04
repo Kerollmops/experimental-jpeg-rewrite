@@ -28,8 +28,8 @@ fn main() -> anyhow::Result<()> {
     for result in WalkDir::new(&source).follow_links(true) {
         match result {
             Ok(entry) => {
-                // TODO We must rewrite this part
-                let destination = destination.join(entry.path());
+                let path = entry.path().strip_prefix(&source)?;
+                let destination = destination.join(path);
                 sender.send(Task { entry, destination })?;
             }
             Err(e) => eprintln!("{e}"),
