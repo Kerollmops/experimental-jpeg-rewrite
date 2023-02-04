@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::{fs, thread};
 
+use anyhow::Context;
 use clap::Parser;
 use crossbeam_channel::Receiver;
 use image::io::Reader as ImageReader;
@@ -22,7 +23,7 @@ fn main() -> anyhow::Result<()> {
     let bar = ProgressBar::new(total_count).with_style(style);
 
     let (sender, receiver) = crossbeam_channel::bounded(100);
-    let _handle = thread::spawn(move || parallel_process(bar, receiver));
+    let handle = thread::spawn(move || parallel_process(bar, receiver));
 
     for result in WalkDir::new(&source).follow_links(true) {
         match result {
@@ -35,6 +36,9 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    drop(sender);
+    handle.join().unwrap()?;
+
     Ok(())
 }
 
@@ -43,19 +47,30 @@ struct Task {
     destination: PathBuf,
 }
 
-fn parallel_process(bar: ProgressBar, receiver: Receiver<Task>) {
-    receiver.into_iter().par_bridge().progress_with(bar).for_each(|Task { entry, destination }| {
-        let ftype = entry.file_type();
-        if ftype.is_file() {
-            match ImageReader::open(entry.path()) {
-                Ok(reader) => match reader.decode() {
-                    Ok(image) => image.save(&destination).unwrap(),
-                    Err(_) => fs::copy(entry.path(), destination).map(drop).unwrap(),
-                },
-                Err(e) => eprintln!("{e}"),
+fn parallel_process(bar: ProgressBar, receiver: Receiver<Task>) -> anyhow::Result<()> {
+    receiver.into_iter().par_bridge().progress_with(bar).try_for_each(
+        |Task { entry, destination }| {
+            let ftype = entry.file_type();
+            if ftype.is_file() {
+                match ImageReader::open(entry.path()) {
+                    Ok(reader) => match reader.decode() {
+                        Ok(image) => image.save(&destination)?,
+                        Err(_) => {
+                            fs::copy(entry.path(), &destination).map(drop).with_context(|| {
+                                format!(
+                                    "Copying {} into {}",
+                                    entry.path().display(),
+                                    destination.display()
+                                )
+                            })?
+                        }
+                    },
+                    Err(e) => eprintln!("{e}"),
+                }
+            } else if ftype.is_dir() || ftype.is_symlink() {
+                fs::create_dir_all(&destination)?;
             }
-        } else if ftype.is_dir() || ftype.is_symlink() {
-            fs::create_dir_all(&destination).unwrap();
-        }
-    });
+            Ok(())
+        },
+    )
 }
